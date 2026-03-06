@@ -82,12 +82,15 @@ const FUNDING_KEYWORDS = [
   'Angel',
   'IPO',
   'Acquisition',
-  'Invest',
-  'Venture',
-  'Raise',
+  'Acquires',
+  'Acquired',
+  'Investment',
+  'Investor',
+  'Venture Capital',
   'Equity',
-  'Unicorn',
   'Valuation',
+  'Raises',
+  'Raised',
   '融资',
   '投资',
   '上市',
@@ -162,9 +165,15 @@ function processItem(
 
   if (hasKeyword) {
     // Determine category
-    const isFunding = FUNDING_KEYWORDS.some(keyword => 
-      contentToCheck.toLowerCase().includes(keyword.toLowerCase())
-    );
+    const isFunding = FUNDING_KEYWORDS.some(keyword => {
+      // If keyword contains non-ascii (Chinese), use includes
+      if (/[^\x00-\x7F]/.test(keyword)) {
+          return contentToCheck.toLowerCase().includes(keyword.toLowerCase());
+      }
+      // For English, use regex with word boundaries
+      const regex = new RegExp(`\\b${keyword}\\b`, 'i');
+      return regex.test(contentToCheck);
+    });
 
     return {
       id: `${source.toLowerCase().replace(/\s/g, '-')}-${index}-${Date.now()}`,
@@ -387,7 +396,13 @@ async function scrape36Kr(): Promise<NewsItem[]> {
       }
 
       const contentToCheck = `${title} ${description}`;
-      const isFunding = FUNDING_KEYWORDS.some(k => contentToCheck.toLowerCase().includes(k.toLowerCase()));
+      const isFunding = FUNDING_KEYWORDS.some(keyword => {
+        if (/[^\x00-\x7F]/.test(keyword)) {
+            return contentToCheck.toLowerCase().includes(keyword.toLowerCase());
+        }
+        const regex = new RegExp(`\\b${keyword}\\b`, 'i');
+        return regex.test(contentToCheck);
+      });
       
       // Use processItem to filter and create item (it now handles negative keywords)
       const item = processItem('36Kr', title, link, description, date, '', index);

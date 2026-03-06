@@ -66,7 +66,9 @@ const KEYWORDS = [
   'Nvidia',
   'Intel',
   'AMD',
-  'Qualcomm'
+  'Qualcomm',
+  'Supply Chain',
+  '供应链'
 ];
 
 const FUNDING_KEYWORDS = [
@@ -81,7 +83,6 @@ const FUNDING_KEYWORDS = [
   'IPO',
   'Acquisition',
   'Invest',
-  'Capital',
   'Venture',
   'Raise',
   'Equity',
@@ -91,18 +92,35 @@ const FUNDING_KEYWORDS = [
   '投资',
   '上市',
   '收购',
-  '资金',
   '创投',
-  'Supply Chain',
-  '供应链',
-  '股份',
-  '估值',
-  '份额',
-  'LP',
-  'GP',
-  '基金',
   '并购',
   '老股'
+];
+
+const NEGATIVE_KEYWORDS = [
+  'Medical',
+  'Bio',
+  'Pharma',
+  'Drug',
+  'Medicine',
+  'Health',
+  'Doctor',
+  'Hospital',
+  'Cancer',
+  'Tumor',
+  'Vaccine',
+  '医疗',
+  '医药',
+  '生物',
+  '制药',
+  '健康',
+  '医生',
+  '医院',
+  '癌症',
+  '肿瘤',
+  '疫苗',
+  '药',
+  '病'
 ];
 
 function isRecent(dateString: string): boolean {
@@ -131,6 +149,13 @@ function processItem(
 
   // Keyword filtering
   const contentToCheck = `${title} ${summary}`;
+  
+  // Negative filtering first
+  const hasNegative = NEGATIVE_KEYWORDS.some(keyword => 
+    contentToCheck.toLowerCase().includes(keyword.toLowerCase())
+  );
+  if (hasNegative) return null;
+
   const hasKeyword = KEYWORDS.some(keyword => 
     contentToCheck.toLowerCase().includes(keyword.toLowerCase())
   );
@@ -364,27 +389,12 @@ async function scrape36Kr(): Promise<NewsItem[]> {
       const contentToCheck = `${title} ${description}`;
       const isFunding = FUNDING_KEYWORDS.some(k => contentToCheck.toLowerCase().includes(k.toLowerCase()));
       
+      // Use processItem to filter and create item (it now handles negative keywords)
       const item = processItem('36Kr', title, link, description, date, '', index);
       if (item) {
           newsItems.push(item);
-      } else if (isFunding) {
-          // Keep funding news even if it doesn't match main keywords
-          // Reuse processItem logic but force it to return an item if we want to include it.
-          // Or just add it manually.
-          // Let's manually construct it to ensure it's included.
-           newsItems.push({
-              id: `36kr-${index}-${Date.now()}`,
-              title,
-              translatedTitle: title, // No translation for Chinese
-              summary: description || title,
-              translatedSummary: description || title,
-              source: '36Kr',
-              url: link,
-              date,
-              imageUrl: '',
-              category: 'funding'
-            });
-      }
+      } 
+      // Removed the 'else if (isFunding)' fallback to prevent irrelevant industries
     });
 
     return newsItems;

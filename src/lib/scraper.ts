@@ -31,7 +31,41 @@ const KEYWORDS = [
   'Sensor',
   'Chip',
   'Processor',
-  'Display'
+  'Display',
+  'Camera',
+  'Lens',
+  'CMOS',
+  'Sony',
+  'Canon',
+  'Nikon',
+  'Fujifilm',
+  'Leica',
+  'Hasselblad',
+  'Sigma',
+  'Tamron',
+  'Panasonic',
+  'Olympus',
+  'Imaging',
+  'Robot',
+  'Robotics',
+  'Humanoid',
+  'AI',
+  'Semiconductor',
+  'Manufacturing',
+  'SpaceX',
+  'Tesla',
+  'Xiaomi',
+  'Huawei',
+  'Apple',
+  'Samsung',
+  'Microsoft',
+  'Google',
+  'Meta',
+  'Amazon',
+  'Nvidia',
+  'Intel',
+  'AMD',
+  'Qualcomm'
 ];
 
 const FUNDING_KEYWORDS = [
@@ -61,7 +95,13 @@ const FUNDING_KEYWORDS = [
   'Supply Chain',
   '供应链',
   '股份',
-  '估值'
+  '估值',
+  '份额',
+  'LP',
+  'GP',
+  '基金',
+  '并购',
+  '老股'
 ];
 
 function isRecent(dateString: string): boolean {
@@ -292,20 +332,113 @@ async function scrapeITHome(): Promise<NewsItem[]> {
     }
 }
 
+async function scrapePetaPixel(): Promise<NewsItem[]> {
+  try {
+    const url = 'https://petapixel.com/';
+    const { data } = await axios.get(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36' }
+    });
+    const $ = cheerio.load(data);
+    const newsItems: NewsItem[] = [];
+
+    $('article').each((index, element) => {
+      const titleElement = $(element).find('h2 a');
+      const title = titleElement.text().trim();
+      const link = titleElement.attr('href') || '';
+      
+      let summary = '';
+      const summaryElement = $(element).find('.post-excerpt, p');
+      if (summaryElement.length > 0) summary = summaryElement.first().text().trim();
+      
+      const dateElement = $(element).find('time');
+      const date = dateElement.attr('datetime') || new Date().toISOString();
+      
+      const imageElement = $(element).find('img');
+      const imageUrl = imageElement.attr('src') || '';
+
+      if (title && link) {
+        const item = processItem('PetaPixel', title, link, summary, date, imageUrl, index);
+        if (item) newsItems.push(item);
+      }
+    });
+
+    return newsItems;
+  } catch (error) {
+    console.error('Error scraping PetaPixel:', error);
+    return [];
+  }
+}
+
+async function scrape36Kr(): Promise<NewsItem[]> {
+  try {
+    const url = 'https://36kr.com/feed';
+    const { data } = await axios.get(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36' }
+    });
+    const $ = cheerio.load(data, { xmlMode: true });
+    const newsItems: NewsItem[] = [];
+
+    $('item').each((index, element) => {
+      const title = $(element).find('title').text().trim();
+      const link = $(element).find('link').text().trim();
+      const description = $(element).find('description').text().trim();
+      const pubDate = $(element).find('pubDate').text().trim();
+      
+      let date = new Date().toISOString();
+      if (pubDate) {
+        try {
+            date = new Date(pubDate).toISOString();
+        } catch (e) {
+            console.error('Error parsing date:', pubDate);
+        }
+      }
+
+      // Check for funding keywords specifically for 36Kr to ensure we capture investment news
+      // even if it doesn't match hardware keywords perfectly (though we added many).
+      const contentToCheck = `${title} ${description}`;
+      const isFunding = FUNDING_KEYWORDS.some(k => contentToCheck.toLowerCase().includes(k.toLowerCase()));
+      
+      // We process it normally, but if it's funding news, we might want to be more lenient on the main KEYWORDS check
+      // OR we just rely on the updated KEYWORDS list.
+      // Given the user wants "Smart Hardware and its core supply chain's venture capital info", 
+      // strict keyword matching is safer to avoid irrelevant news (e.g. pure software/internet funding).
+      // But "36Kr Venture Capital" (requested by user) might imply they want general VC news too?
+      // No, user said "Smart Hardware... venture capital info".
+      // So I will stick to processItem logic.
+      
+      const item = processItem('36Kr', title, link, description, date, '', index);
+      if (item) {
+          newsItems.push(item);
+      } else if (isFunding) {
+          // Fallback: If it's funding news but missed by hardware keywords, 
+          // let's double check if it's really irrelevant.
+          // For now, let's trust the hardware keywords list is comprehensive enough.
+          // Actually, let's include it if it mentions "Fund", "Capital" etc AND matches ANY of our expanded keywords.
+      }
+    });
+
+    return newsItems;
+  } catch (error) {
+    console.error('Error scraping 36Kr:', error);
+    return [];
+  }
+}
+
 export async function scrapeAllNews(): Promise<NewsItem[]> {
-  const [tc, tv, uv, zh, it] = await Promise.all([
+  const [tc, tv, pp, zh, it, kr] = await Promise.all([
     scrapeTechCrunch(),
     scrapeTheVerge(),
-    scrapeUploadVR(),
+    scrapePetaPixel(),
     scrapeZhidx(),
-    scrapeITHome()
+    scrapeITHome(),
+    scrape36Kr()
   ]);
   
-  const allNews = [...tc, ...tv, ...uv, ...zh, ...it];
+  const allNews = [...tc, ...tv, ...pp, ...zh, ...it, ...kr];
 
   // Translate items (in parallel)
   await Promise.all(allNews.map(async (item) => {
-     if (['TechCrunch', 'The Verge', 'UploadVR'].includes(item.source)) {
+     if (['TechCrunch', 'The Verge', 'PetaPixel'].includes(item.source)) {
          item.translatedTitle = await translateText(item.title);
          item.translatedSummary = await translateText(item.summary);
      } else {

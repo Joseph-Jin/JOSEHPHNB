@@ -3,6 +3,7 @@ import * as cheerio from 'cheerio';
 import { subDays, isAfter, parseISO } from 'date-fns';
 import { NewsItem } from './types';
 import { translateText } from './translate';
+import iconv from 'iconv-lite';
 
 const KEYWORDS = [
   'Action Camera',
@@ -360,27 +361,29 @@ async function scrape36Kr(): Promise<NewsItem[]> {
         }
       }
 
-      // Check for funding keywords specifically for 36Kr to ensure we capture investment news
-      // even if it doesn't match hardware keywords perfectly (though we added many).
       const contentToCheck = `${title} ${description}`;
       const isFunding = FUNDING_KEYWORDS.some(k => contentToCheck.toLowerCase().includes(k.toLowerCase()));
-      
-      // We process it normally, but if it's funding news, we might want to be more lenient on the main KEYWORDS check
-      // OR we just rely on the updated KEYWORDS list.
-      // Given the user wants "Smart Hardware and its core supply chain's venture capital info", 
-      // strict keyword matching is safer to avoid irrelevant news (e.g. pure software/internet funding).
-      // But "36Kr Venture Capital" (requested by user) might imply they want general VC news too?
-      // No, user said "Smart Hardware... venture capital info".
-      // So I will stick to processItem logic.
       
       const item = processItem('36Kr', title, link, description, date, '', index);
       if (item) {
           newsItems.push(item);
       } else if (isFunding) {
-          // Fallback: If it's funding news but missed by hardware keywords, 
-          // let's double check if it's really irrelevant.
-          // For now, let's trust the hardware keywords list is comprehensive enough.
-          // Actually, let's include it if it mentions "Fund", "Capital" etc AND matches ANY of our expanded keywords.
+          // Keep funding news even if it doesn't match main keywords
+          // Reuse processItem logic but force it to return an item if we want to include it.
+          // Or just add it manually.
+          // Let's manually construct it to ensure it's included.
+           newsItems.push({
+              id: `36kr-${index}-${Date.now()}`,
+              title,
+              translatedTitle: title, // No translation for Chinese
+              summary: description || title,
+              translatedSummary: description || title,
+              source: '36Kr',
+              url: link,
+              date,
+              imageUrl: '',
+              category: 'funding'
+            });
       }
     });
 
@@ -391,17 +394,184 @@ async function scrape36Kr(): Promise<NewsItem[]> {
   }
 }
 
+async function scrapeRSS(sourceName: string, url: string): Promise<NewsItem[]> {
+  try {
+    const { data } = await axios.get(url, {
+      timeout: 10000,
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36' }
+    });
+    const $ = cheerio.load(data, { xmlMode: true });
+    const newsItems: NewsItem[] = [];
+
+    $('item').each((index, element) => {
+      const title = $(element).find('title').text().trim();
+      const link = $(element).find('link').text().trim();
+      const description = $(element).find('description').text().trim();
+      const pubDate = $(element).find('pubDate').text().trim();
+      
+      let date = new Date().toISOString();
+      if (pubDate) {
+        try {
+            date = new Date(pubDate).toISOString();
+        } catch (e) {
+            console.error(`Error parsing date for ${sourceName}:`, pubDate);
+        }
+      }
+
+      // Basic content check for summary
+      // Some RSS feeds have full content in description or content:encoded
+      const summary = $(element).find('description').text().trim() || title;
+
+      const item = processItem(sourceName, title, link, summary, date, '', index);
+      if (item) newsItems.push(item);
+    });
+
+    return newsItems;
+  } catch (error) {
+    console.error(`Error scraping ${sourceName} RSS:`, error);
+    return [];
+  }
+}
+
+async function scrapePConline(): Promise<NewsItem[]> {
+  try {
+    const url = 'https://news.pconline.com.cn/';
+    const { data } = await axios.get(url, {
+      responseType: 'arraybuffer',
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' }
+    });
+    
+    // Decode GBK
+    const html = iconv.decode(data, 'gbk');
+    const $ = cheerio.load(html);
+    const newsItems: NewsItem[] = [];
+
+    $('.news-list li, .list li').each((index, element) => {
+      const titleElement = $(element).find('a');
+      let title = titleElement.text().trim();
+      // Clean title (remove category/date suffix if present)
+      // PConline titles sometimes are just clean, sometimes have suffix.
+      // In the inspection, title was "比亚迪...业界资讯".
+      // We might want to remove "业界资讯" suffix if it's common.
+      // But let's keep it simple for now.
+      
+      let link = titleElement.attr('href') || '';
+      if (link && link.startsWith('//')) {
+          link = `https:${link}`;
+      }
+      
+      // Date is often in a separate span or just text
+      // Inspect output: "|  2026-03-06 17:56"
+      let dateStr = $(element).find('.time, .date').text().trim().replace('|', '').trim();
+      let date = new Date().toISOString();
+      if (dateStr) {
+          try {
+              // PConline date might be "2026-03-06 17:56"
+              date = new Date(dateStr).toISOString();
+          } catch (e) {}
+      }
+
+      if (title && link) {
+        const item = processItem('PConline', title, link, title, date, '', index);
+        if (item) newsItems.push(item);
+      }
+    });
+
+    return newsItems;
+  } catch (error) {
+    console.error('Error scraping PConline:', error);
+    return [];
+  }
+}
+
+async function scrapeShenzhenWare(): Promise<NewsItem[]> {
+  try {
+    const url = 'https://www.shenzhenware.com/';
+    const { data } = await axios.get(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' }
+    });
+    const $ = cheerio.load(data);
+    const newsItems: NewsItem[] = [];
+
+    $('.card').each((index, element) => {
+      const titleElement = $(element).find('h3 a, .title a');
+      const title = titleElement.text().trim();
+      let link = titleElement.attr('href') || '';
+      if (link && !link.startsWith('http')) {
+          link = `https://www.shenzhenware.com${link}`;
+      }
+      
+      const summary = $(element).find('.desc, p').text().trim();
+      const dateStr = $(element).find('.date, .time').text().trim();
+      // Date handling might be tricky if it's relative "2 days ago".
+      // Let's assume current date if parsing fails.
+      const date = new Date().toISOString();
+
+      if (title && link) {
+        const item = processItem('ShenzhenWare', title, link, summary, date, '', index);
+        if (item) newsItems.push(item);
+      }
+    });
+
+    return newsItems;
+  } catch (error) {
+    console.error('Error scraping ShenzhenWare:', error);
+    return [];
+  }
+}
+
+async function scrapeLeikeji(): Promise<NewsItem[]> {
+    // Try HTML scraping first as RSS timed out in test
+    try {
+        const url = 'https://www.leikeji.com/';
+        const { data } = await axios.get(url, {
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' }
+        });
+        const $ = cheerio.load(data);
+        const newsItems: NewsItem[] = [];
+
+        $('.article-list li, .item').each((index, element) => {
+            const titleElement = $(element).find('.title a, h2 a');
+            const title = titleElement.text().trim();
+            let link = titleElement.attr('href') || '';
+            if (link && !link.startsWith('http')) {
+                link = `https://www.leikeji.com${link}`;
+            }
+            
+            const summary = $(element).find('.desc, .summary').text().trim();
+            const date = new Date().toISOString();
+
+            if (title && link) {
+                const item = processItem('LeiKeJi', title, link, summary, date, '', index);
+                if (item) newsItems.push(item);
+            }
+        });
+        
+        return newsItems;
+    } catch (e) {
+        console.error('Error scraping LeiKeJi HTML:', e);
+        // Fallback to RSS if HTML fails
+        return scrapeRSS('LeiKeJi', 'https://www.leikeji.com/feed');
+    }
+}
+
 export async function scrapeAllNews(): Promise<NewsItem[]> {
-  const [tc, tv, pp, zh, it, kr] = await Promise.all([
+  const [tc, tv, pp, zh, it, kr, ifanr, lp, vr, sz, lk, pc] = await Promise.all([
     scrapeTechCrunch(),
     scrapeTheVerge(),
     scrapePetaPixel(),
     scrapeZhidx(),
     scrapeITHome(),
-    scrape36Kr()
+    scrape36Kr(),
+    scrapeRSS('ifanr', 'https://www.ifanr.com/feed'),
+    scrapeRSS('Leiphone', 'https://www.leiphone.com/feed'),
+    scrapeRSS('VRTuoluo', 'https://www.vrtuoluo.cn/feed'),
+    scrapeShenzhenWare(),
+    scrapeLeikeji(),
+    scrapePConline()
   ]);
   
-  const allNews = [...tc, ...tv, ...pp, ...zh, ...it, ...kr];
+  const allNews = [...tc, ...tv, ...pp, ...zh, ...it, ...kr, ...ifanr, ...lp, ...vr, ...sz, ...lk, ...pc];
 
   // Translate items (in parallel)
   await Promise.all(allNews.map(async (item) => {

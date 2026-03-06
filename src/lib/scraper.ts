@@ -232,40 +232,7 @@ async function scrapeTheVerge(): Promise<NewsItem[]> {
   }
 }
 
-async function scrapeUploadVR(): Promise<NewsItem[]> {
-  try {
-    const url = 'https://www.uploadvr.com/';
-    const { data } = await axios.get(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36' }
-    });
-    const $ = cheerio.load(data);
-    const newsItems: NewsItem[] = [];
 
-    // UploadVR cards
-    $('a.card, article, .post-card, .card').each((index, element) => {
-       // Title might be in h2, h3, or just text
-       let title = $(element).find('h2, h3, .card__title, .post-title').text().trim();
-       
-       let link = $(element).attr('href') || $(element).find('a').attr('href') || '';
-       if (link && !link.startsWith('http')) {
-         link = `https://www.uploadvr.com${link}`;
-       }
-       
-       const dateElement = $(element).find('time');
-       const date = dateElement.attr('datetime') || new Date().toISOString();
-
-       if (title && link) {
-         const item = processItem('UploadVR', title, link, title, date, '', index);
-         if (item) newsItems.push(item);
-       }
-    });
-
-    return newsItems;
-  } catch (error) {
-    console.error('Error scraping UploadVR:', error);
-    return [];
-  }
-}
 
 async function scrapeZhidx(): Promise<NewsItem[]> {
     try {
